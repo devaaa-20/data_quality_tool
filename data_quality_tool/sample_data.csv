@@ -1,0 +1,12 @@
+customer_id,name,email,phone,signup_date,age,salary
+1,Arjun Mehta,arjun.mehta@email.com,+91-9876543210,2023-01-15,29,55000
+2,Divya Rao,divya.rao@email.com,9876543211,15-01-2023,34,62000
+3,Karthik S,karthik.s@email,+91-9876543212,2023/02/20,41,71000
+4,,priya.n@email.com,+91-9876543213,2023-03-10,,48000
+5,Rohit Sharma,rohit.sharma@email.com,+91-9876543214,2023-04-05,150,58000
+6,Rohit Sharma,rohit.sharma@email.com,+91-9876543214,2023-04-05,38,58000
+7,Sneha Iyer,sneha.iyer@email.com,98765,2023-05-18,26,-40000
+8,Vikram Patel,vikram.patel@email.com,+91-9876543216,not_a_date,45,67000
+9,Anjali Gupta,anjali.gupta@email.com,+91-9876543217,2023-07-22,31,59000
+9,Anjali G,anjali.gupta@email.com,+91-9876543217,2023-07-22,31,59000
+10,Manoj Kumar,manoj.kumar@email.com,+91-9876543218,2023-08-30,,64000
