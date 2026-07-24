@@ -11,6 +11,7 @@ import re
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from rapidfuzz import fuzz
 
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
@@ -211,6 +212,85 @@ class DataQualityChecker:
             "details": {"duplicate_row_indices": dup_values.index.tolist()},
         }
         return dup_values.index.tolist()
+
+    def check_fuzzy_duplicates(self, column, similarity_threshold=85):
+        """Flags near-duplicate entity names that likely refer to the same thing
+        but are spelled/formatted differently — e.g. 'IBM' vs 'I.B.M.' vs
+        'International Business Machines'. Uses rapidfuzz token_sort_ratio.
+
+        Returns a list of groups, where each group is a list of (index, value)
+        pairs that are considered near-duplicates of each other.
+        """
+        if column not in self.df.columns:
+            return []
+
+        values = self.df[column].dropna().astype(str)
+        normalized = values.apply(lambda v: re.sub(r"[.\s]+", " ", v).strip().lower())
+
+        seen = set()
+        groups = []
+        items = list(normalized.items())
+
+        for i in range(len(items)):
+            idx_i, val_i = items[i]
+            if idx_i in seen:
+                continue
+            group = [(idx_i, values[idx_i])]
+            for j in range(i + 1, len(items)):
+                idx_j, val_j = items[j]
+                if idx_j in seen:
+                    continue
+                score = fuzz.token_sort_ratio(val_i, val_j)
+                if score >= similarity_threshold:
+                    group.append((idx_j, values[idx_j]))
+                    seen.add(idx_j)
+            if len(group) > 1:
+                seen.add(idx_i)
+                groups.append(group)
+
+        total_flagged = sum(len(g) for g in groups)
+        self.results[f"Inconsistent Naming ({column})"] = {
+            "status": self._status(total_flagged),
+            "issues_found": total_flagged,
+            "details": {"near_duplicate_groups": groups},
+        }
+        return groups
+
+    def suggest_column_types(self, sample_size=50):
+        """Auto-detects likely semantic type for each column by sampling values
+        and testing them against known patterns. Returns a dict like:
+        {'email': 'email', 'signup_date': 'date', 'age': 'numeric', 'customer_id': 'id/unique'}
+        This is a heuristic aid for the UI — not a hard classification.
+        """
+        suggestions = {}
+        for col in self.df.columns:
+            sample = self.df[col].dropna().astype(str).head(sample_size)
+            if sample.empty:
+                suggestions[col] = "unknown"
+                continue
+
+            n = len(sample)
+            email_hits = sample.str.match(EMAIL_REGEX).sum()
+            phone_hits = sample.str.match(PHONE_REGEX).sum()
+            date_hits = sample.apply(lambda v: self._try_parse_date(v) is not None).sum()
+            numeric_hits = pd.to_numeric(sample, errors="coerce").notna().sum()
+
+            col_lower = col.lower()
+            if email_hits / n > 0.7:
+                suggestions[col] = "email"
+            elif phone_hits / n > 0.7:
+                suggestions[col] = "phone"
+            elif date_hits / n > 0.7:
+                suggestions[col] = "date"
+            elif numeric_hits / n > 0.9:
+                suggestions[col] = "numeric"
+            elif "id" in col_lower and self.df[col].is_unique:
+                suggestions[col] = "id/unique"
+            elif "name" in col_lower:
+                suggestions[col] = "name/text"
+            else:
+                suggestions[col] = "text"
+        return suggestions
 
     # ---------- scoring ----------
     def completeness_score(self):

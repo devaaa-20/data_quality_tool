@@ -1,0 +1,15 @@
+email_column: email
+phone_column: phone
+date_column: signup_date
+primary_key: customer_id
+range_checks:
+  - column: age
+    min: 0
+    max: 120
+negative_check_columns:
+  - salary
+consistency_checks:
+  - id_column: customer_id
+    value_column: name
+fuzzy_name_column: name
+fuzzy_threshold: 85
