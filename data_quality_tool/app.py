@@ -206,7 +206,12 @@ with tab_check:
                 st.subheader(f"🔤 {fuzzy_key} — Near-Duplicate Groups")
                 st.caption("These distinct values look like they refer to the same entity but are spelled/formatted differently.")
                 for group in checker.results[fuzzy_key]["details"]["near_duplicate_groups"]:
-                    labels = [f"{val} ({len(idxs)} rows)" for idxs, val in group]
+                    labels = []
+                    for idxs, val in group:
+                        # idxs is normally a list of row indices; be defensive in case
+                        # an older/newer version of quality_checker.py returns a single index
+                        count = len(idxs) if isinstance(idxs, (list, tuple, set)) else 1
+                        labels.append(f"{val} ({count} rows)")
                     st.write("• " + "  ≈  ".join(labels))
 
         st.subheader("💡 Suggestions")
