@@ -133,7 +133,12 @@ with tab_check:
         value_col = st.sidebar.selectbox("Value that should match the ID", options)
 
         st.sidebar.subheader("Inconsistent Naming (Fuzzy Match)")
-        fuzzy_col = st.sidebar.selectbox("Column to check for near-duplicate names", options, index=options.index(best_guess("name/text")) if best_guess("name/text") in options else 0)
+        text_like_cols = [c for c, t in auto_types.items() if t in ("name/text", "text")]
+        fuzzy_cols = st.sidebar.multiselect(
+            "Column(s) to check for near-duplicate names",
+            columns,
+            default=text_like_cols,
+        )
         fuzzy_threshold = st.sidebar.slider("Similarity threshold (%)", 50, 100, 85)
 
     run_button = st.sidebar.button("🚀 Run Quality Checks", type="primary")
@@ -159,8 +164,9 @@ with tab_check:
                 checker.check_uniqueness(pk_col)
             if id_col != "-- none --" and value_col != "-- none --":
                 checker.check_consistency(id_col, value_col)
-            if fuzzy_col != "-- none --":
-                checker.check_fuzzy_duplicates(fuzzy_col, fuzzy_threshold)
+            if fuzzy_cols:
+                for fcol in fuzzy_cols:
+                    checker.check_fuzzy_duplicates(fcol, fuzzy_threshold)
         else:
             st.warning("No rules loaded — nothing to run.")
             st.stop()
@@ -193,14 +199,15 @@ with tab_check:
             )
             st.plotly_chart(fig, use_container_width=True)
 
-        # Fuzzy name matching detail view
-        fuzzy_key = next((k for k in checker.results if k.startswith("Inconsistent Naming")), None)
-        if fuzzy_key and checker.results[fuzzy_key]["issues_found"] > 0:
-            st.subheader("🔤 Inconsistent Naming — Near-Duplicate Groups")
-            st.caption("These entries look like they refer to the same entity but are formatted differently.")
-            for group in checker.results[fuzzy_key]["details"]["near_duplicate_groups"]:
-                values = [v for _, v in group]
-                st.write("• " + "  ≈  ".join(values))
+        # Fuzzy name matching detail view (one section per checked column)
+        fuzzy_keys = [k for k in checker.results if k.startswith("Inconsistent Naming")]
+        for fuzzy_key in fuzzy_keys:
+            if checker.results[fuzzy_key]["issues_found"] > 0:
+                st.subheader(f"🔤 {fuzzy_key} — Near-Duplicate Groups")
+                st.caption("These distinct values look like they refer to the same entity but are spelled/formatted differently.")
+                for group in checker.results[fuzzy_key]["details"]["near_duplicate_groups"]:
+                    labels = [f"{val} ({len(idxs)} rows)" for idxs, val in group]
+                    st.write("• " + "  ≈  ".join(labels))
 
         st.subheader("💡 Suggestions")
         tips = checker.suggestions()

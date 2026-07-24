@@ -218,39 +218,50 @@ class DataQualityChecker:
         but are spelled/formatted differently — e.g. 'IBM' vs 'I.B.M.' vs
         'International Business Machines'. Uses rapidfuzz token_sort_ratio.
 
-        Returns a list of groups, where each group is a list of (index, value)
-        pairs that are considered near-duplicates of each other.
+        Compares UNIQUE values only (not every row), so exact repeats of the
+        same category (e.g. 500 rows of 'United States') don't get flagged
+        as noise — only genuinely different spellings/formats are grouped.
+
+        Returns a list of groups, where each group is a list of unique values
+        considered near-duplicates of each other, plus the row indices for
+        each value.
         """
         if column not in self.df.columns:
             return []
 
-        values = self.df[column].dropna().astype(str)
-        normalized = values.apply(lambda v: re.sub(r"[.\s]+", " ", v).strip().lower())
+        col_series = self.df[column].dropna().astype(str)
+        normalized_map = {}  # unique_value -> normalized form
+        for v in col_series.unique():
+            normalized_map[v] = re.sub(r"[.\s]+", " ", v).strip().lower()
 
+        unique_values = list(normalized_map.keys())
         seen = set()
         groups = []
-        items = list(normalized.items())
 
-        for i in range(len(items)):
-            idx_i, val_i = items[i]
-            if idx_i in seen:
+        for i in range(len(unique_values)):
+            v_i = unique_values[i]
+            if v_i in seen:
                 continue
-            group = [(idx_i, values[idx_i])]
-            for j in range(i + 1, len(items)):
-                idx_j, val_j = items[j]
-                if idx_j in seen:
+            group = [v_i]
+            for j in range(i + 1, len(unique_values)):
+                v_j = unique_values[j]
+                if v_j in seen:
                     continue
-                score = fuzz.token_sort_ratio(val_i, val_j)
+                score = fuzz.token_sort_ratio(normalized_map[v_i], normalized_map[v_j])
                 if score >= similarity_threshold:
-                    group.append((idx_j, values[idx_j]))
-                    seen.add(idx_j)
+                    group.append(v_j)
+                    seen.add(v_j)
             if len(group) > 1:
-                seen.add(idx_i)
-                groups.append(group)
+                seen.add(v_i)
+                # attach row indices + counts for each value in the group
+                detailed_group = [
+                    (self.df[self.df[column] == v].index.tolist(), v) for v in group
+                ]
+                groups.append(detailed_group)
 
-        total_flagged = sum(len(g) for g in groups)
+        total_flagged = sum(len(g) for g in groups)  # count of distinct spellings flagged
         self.results[f"Inconsistent Naming ({column})"] = {
-            "status": self._status(total_flagged),
+            "status": self._status(total_flagged, warn_threshold_pct=50, fail_threshold_pct=50),
             "issues_found": total_flagged,
             "details": {"near_duplicate_groups": groups},
         }

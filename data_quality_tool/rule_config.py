@@ -36,7 +36,8 @@ DEFAULT_RULES = {
     "range_checks": [],
     "negative_check_columns": [],
     "consistency_checks": [],
-    "fuzzy_name_column": None,
+    "fuzzy_name_column": None,       # kept for backward compatibility (single column)
+    "fuzzy_name_columns": [],        # preferred: list of columns to fuzzy-check
     "fuzzy_threshold": 85,
 }
 
@@ -77,9 +78,10 @@ def run_checks_from_rules(checker, rules):
     for cc in rules.get("consistency_checks", []):
         checker.check_consistency(cc["id_column"], cc["value_column"])
 
-    if rules.get("fuzzy_name_column"):
-        checker.check_fuzzy_duplicates(
-            rules["fuzzy_name_column"], rules.get("fuzzy_threshold", 85)
-        )
+    fuzzy_cols = list(rules.get("fuzzy_name_columns") or [])
+    if rules.get("fuzzy_name_column"):  # legacy single-column key
+        fuzzy_cols.append(rules["fuzzy_name_column"])
+    for col in dict.fromkeys(fuzzy_cols):  # dedupe, preserve order
+        checker.check_fuzzy_duplicates(col, rules.get("fuzzy_threshold", 85))
 
     return checker

@@ -11,5 +11,6 @@ negative_check_columns:
 consistency_checks:
   - id_column: customer_id
     value_column: name
-fuzzy_name_column: name
+fuzzy_name_columns:
+  - name
 fuzzy_threshold: 85
