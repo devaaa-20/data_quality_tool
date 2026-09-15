@@ -230,13 +230,15 @@ def apply_spec(df: pd.DataFrame, spec: dict):
         return d.select_dtypes(include="number").corr(), None, None
 
     x, y, agg = spec.get("x"), spec.get("y"), spec.get("agg")
+    color = spec.get("color")
     operation = spec.get("operation", "raw")
 
     if operation in ("groupby", "top_n", "trend") and x:
+        group_cols = [x, color] if (color and color != x) else [x]
         if y and agg and y in d.columns:
-            d = d.groupby(x, as_index=False)[y].agg(agg)
+            d = d.groupby(group_cols, as_index=False)[y].agg(agg)
         elif agg == "count" or (not y):
-            d = d.groupby(x, as_index=False).size().rename(columns={"size": "count"})
+            d = d.groupby(group_cols, as_index=False).size().rename(columns={"size": "count"})
             y = "count"
 
     sort = spec.get("sort")
@@ -255,19 +257,21 @@ def apply_spec(df: pd.DataFrame, spec: dict):
 def render_chart(d: pd.DataFrame, x, y, spec: dict):
     chart_type = spec["chart_type"]
     title = spec.get("title") or ""
+    color = spec.get("color")
+    color = color if (color and color in d.columns) else None
 
     if chart_type == "heatmap":
         return px.imshow(d, text_auto=True, title=title or "Correlation heatmap")
     if chart_type == "bar":
-        return px.bar(d, x=x, y=y, title=title)
+        return px.bar(d, x=x, y=y, color=color, barmode="group", title=title)
     if chart_type == "line":
-        return px.line(d, x=x, y=y, title=title)
+        return px.line(d, x=x, y=y, color=color, title=title)
     if chart_type == "scatter":
-        return px.scatter(d, x=x, y=y, title=title)
+        return px.scatter(d, x=x, y=y, color=color, title=title)
     if chart_type == "pie":
         return px.pie(d, names=x, values=y, title=title)
     if chart_type == "histogram":
-        return px.histogram(d, x=x or (d.select_dtypes(include="number").columns[0] if not d.select_dtypes(include="number").empty else d.columns[0]), title=title)
+        return px.histogram(d, x=x or (d.select_dtypes(include="number").columns[0] if not d.select_dtypes(include="number").empty else d.columns[0]), color=color, title=title)
     if chart_type == "box":
-        return px.box(d, x=x, y=y, title=title)
+        return px.box(d, x=x, y=y, color=color, title=title)
     raise ValueError(f"Unsupported chart_type: {chart_type}")
