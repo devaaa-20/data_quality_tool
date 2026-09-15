@@ -16,6 +16,7 @@ from quality_checker import DataQualityChecker
 from rule_config import load_rules, run_checks_from_rules, DEFAULT_RULES
 from history_tracker import log_run, get_history, clear_history
 from pdf_report import generate_pdf_report
+from nl_visualizer import parse_prompt, apply_spec, render_chart
 import tempfile
 import os
 
@@ -24,10 +25,74 @@ st.set_page_config(page_title="Data Quality Tool", layout="wide")
 st.title("🧹 Data Quality Tool")
 st.caption("Upload a dataset, run automated quality checks, track score history, and export a PDF report.")
 
-tab_check, tab_history = st.tabs(["🔍 Run Checks", "📈 Score History"])
+tab_check, tab_visualize, tab_history = st.tabs(
+    ["🔍 Run Checks", "📊 Visualize", "📈 Score History"]
+)
 
 # =========================================================
-# TAB 2: HISTORY (kept at top so it can be built independent of upload)
+# TAB 2: VISUALIZE (natural-language charting, no API/cost — rule-based)
+# =========================================================
+with tab_visualize:
+    st.subheader("Ask for a chart in plain English")
+    st.caption(
+        "Runs entirely locally — no API calls, no cost. Works best with prompts like "
+        "\"average <column> by <column>\", \"top 5 <column> by <column>\", "
+        "\"<column> vs <column>\", \"distribution of <column>\", \"trend of <column> over time\", "
+        "or \"correlation heatmap\"."
+    )
+
+    viz_df = st.session_state.get("viz_source_df")
+    viz_name = st.session_state.get("viz_source_name")
+
+    override_file = st.file_uploader(
+        "Using data from the Run Checks tab automatically — or upload a different cleaned file here",
+        type=["csv", "xlsx", "xls"],
+        key="viz_uploader",
+    )
+    if override_file is not None:
+        if override_file.name.endswith(".csv"):
+            viz_df = pd.read_csv(override_file)
+        else:
+            viz_df = pd.read_excel(override_file)
+        viz_name = override_file.name
+
+    if viz_df is None:
+        st.info("Run a check (or upload a file here) to load data for visualizing.")
+    else:
+        st.caption(f"Visualizing: **{viz_name}** — {len(viz_df)} rows x {len(viz_df.columns)} columns")
+        st.dataframe(viz_df.head(5), use_container_width=True)
+
+        if "viz_history" not in st.session_state:
+            st.session_state.viz_history = []
+
+        viz_prompt = st.text_input(
+            "Your request",
+            placeholder="e.g. average salary by department",
+            key="viz_prompt_input",
+        )
+        viz_go = st.button("Visualize", type="primary", key="viz_go_button")
+
+        if viz_go and viz_prompt:
+            try:
+                spec = parse_prompt(viz_prompt, viz_df.columns.tolist())
+                result_df, x, y = apply_spec(viz_df, spec)
+                if result_df.empty:
+                    st.warning("That request matched, but returned no rows — try rephrasing or check your filter.")
+                else:
+                    fig = render_chart(result_df, x, y, spec)
+                    st.session_state.viz_history.insert(0, {"prompt": viz_prompt, "spec": spec, "fig": fig})
+            except Exception as e:
+                st.error(f"Couldn't build that chart — try rephrasing. ({e})")
+
+        for item in st.session_state.viz_history:
+            st.markdown(f"**\"{item['prompt']}\"**")
+            st.plotly_chart(item["fig"], use_container_width=True)
+            with st.expander("What I understood this as"):
+                st.json(item["spec"])
+            st.divider()
+
+# =========================================================
+# TAB 3: HISTORY (kept at top so it can be built independent of upload)
 # =========================================================
 with tab_history:
     st.subheader("Quality Score Trend Over Time")
@@ -80,6 +145,11 @@ with tab_check:
     st.subheader("Preview of Uploaded Data")
     st.dataframe(df.head(10), use_container_width=True)
     st.caption(f"{len(df)} rows x {len(df.columns)} columns")
+
+    # make the raw upload available to the Visualize tab even before any
+    # auto-fix is applied (auto-fix will overwrite this with the cleaned version)
+    st.session_state["viz_source_df"] = df
+    st.session_state["viz_source_name"] = fname
 
     checker = DataQualityChecker(df)
     columns = df.columns.tolist()
@@ -239,6 +309,11 @@ with tab_check:
             st.dataframe(cleaned_df.head(10), use_container_width=True)
             csv_bytes = cleaned_df.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Download Cleaned CSV", data=csv_bytes, file_name="cleaned_data.csv", mime="text/csv")
+
+            # hand the cleaned version to the Visualize tab
+            st.session_state["viz_source_df"] = cleaned_df
+            st.session_state["viz_source_name"] = f"{fname} (cleaned)"
+            st.info("✅ Cleaned data is now loaded in the **📊 Visualize** tab.")
 
         # ---------------- Downloads ----------------
         st.header("⬇️ Export Report")
