@@ -30,16 +30,11 @@ tab_check, tab_visualize, tab_history = st.tabs(
 )
 
 # =========================================================
-# TAB 2: VISUALIZE (natural-language charting, no API/cost — rule-based)
+# TAB 2: VISUALIZE (plain English, or a Power BI-style field-well builder)
 # =========================================================
 with tab_visualize:
-    st.subheader("Ask for a chart in plain English")
-    st.caption(
-        "Runs entirely locally — no API calls, no cost. Works best with prompts like "
-        "\"average <column> by <column>\", \"top 5 <column> by <column>\", "
-        "\"<column> vs <column>\", \"distribution of <column>\", \"trend of <column> over time\", "
-        "or \"correlation heatmap\"."
-    )
+    st.subheader("Visualize")
+    st.caption("Runs entirely locally — no API calls, no cost.")
 
     viz_df = st.session_state.get("viz_source_df")
     viz_name = st.session_state.get("viz_source_name")
@@ -62,34 +57,140 @@ with tab_visualize:
         st.caption(f"Visualizing: **{viz_name}** — {len(viz_df)} rows x {len(viz_df.columns)} columns")
         st.dataframe(viz_df.head(5), use_container_width=True)
 
-        if "viz_history" not in st.session_state:
-            st.session_state.viz_history = []
-
-        viz_prompt = st.text_input(
-            "Your request",
-            placeholder="e.g. average salary by department",
-            key="viz_prompt_input",
+        mode = st.radio(
+            "How do you want to build the chart?",
+            ["🗣️ Describe it in plain English", "🧱 Build it manually (Power BI-style)"],
+            horizontal=True,
+            key="viz_mode",
         )
-        viz_go = st.button("Visualize", type="primary", key="viz_go_button")
 
-        if viz_go and viz_prompt:
-            try:
-                spec = parse_prompt(viz_prompt, viz_df.columns.tolist())
-                result_df, x, y = apply_spec(viz_df, spec)
-                if result_df.empty:
-                    st.warning("That request matched, but returned no rows — try rephrasing or check your filter.")
+        # -------------------------------------------------
+        # MODE A: natural language
+        # -------------------------------------------------
+        if mode.startswith("🗣️"):
+            st.caption(
+                "Try: \"average <column> by <column>\", \"top 5 <column> by <column>\", "
+                "\"<column> vs <column>\", \"distribution of <column>\", "
+                "\"trend of <column> over time\", or \"correlation heatmap\"."
+            )
+            if "viz_history" not in st.session_state:
+                st.session_state.viz_history = []
+
+            viz_prompt = st.text_input(
+                "Your request", placeholder="e.g. average salary by department", key="viz_prompt_input"
+            )
+            viz_go = st.button("Visualize", type="primary", key="viz_go_button")
+
+            if viz_go and viz_prompt:
+                try:
+                    spec = parse_prompt(viz_prompt, viz_df.columns.tolist())
+                    result_df, x, y = apply_spec(viz_df, spec)
+                    if result_df.empty:
+                        st.warning("That request matched, but returned no rows — try rephrasing or check your filter.")
+                    else:
+                        fig = render_chart(result_df, x, y, spec)
+                        st.session_state.viz_history.insert(0, {"prompt": viz_prompt, "spec": spec, "fig": fig})
+                except Exception as e:
+                    st.error(f"Couldn't build that chart — try rephrasing. ({e})")
+
+            for item in st.session_state.viz_history:
+                st.markdown(f"**\"{item['prompt']}\"**")
+                st.plotly_chart(item["fig"], use_container_width=True)
+                with st.expander("What I understood this as"):
+                    st.json(item["spec"])
+                st.divider()
+
+        # -------------------------------------------------
+        # MODE B: manual field-well builder (Power BI-style)
+        # -------------------------------------------------
+        else:
+            col_options = ["(none)"] + viz_df.columns.tolist()
+
+            chart_type = st.selectbox(
+                "Visual type", ["bar", "line", "scatter", "pie", "histogram", "box", "heatmap"],
+                key="mb_chart_type",
+            )
+
+            if chart_type == "heatmap":
+                st.caption("Correlation heatmap uses every numeric column automatically — no fields to pick.")
+                x_col, y_col, color_col = "(none)", "(none)", "(none)"
+            else:
+                f1, f2, f3 = st.columns(3)
+                x_col = f1.selectbox("X-axis", col_options, key="mb_x")
+                if chart_type == "histogram":
+                    y_col = "(none)"
+                    f2.caption("Y-axis: histograms show counts automatically.")
                 else:
-                    fig = render_chart(result_df, x, y, spec)
-                    st.session_state.viz_history.insert(0, {"prompt": viz_prompt, "spec": spec, "fig": fig})
-            except Exception as e:
-                st.error(f"Couldn't build that chart — try rephrasing. ({e})")
+                    y_label = "Values" if chart_type == "pie" else "Y-axis"
+                    y_col = f2.selectbox(y_label, col_options, key="mb_y")
+                color_col = f3.selectbox("Legend / color by (optional)", col_options, key="mb_color")
 
-        for item in st.session_state.viz_history:
-            st.markdown(f"**\"{item['prompt']}\"**")
-            st.plotly_chart(item["fig"], use_container_width=True)
-            with st.expander("What I understood this as"):
-                st.json(item["spec"])
-            st.divider()
+            agg_choice = "(none)"
+            if chart_type not in ("histogram", "heatmap", "scatter"):
+                agg_choice = st.selectbox(
+                    "Aggregation", ["(none)", "sum", "mean", "count", "min", "max", "median"], key="mb_agg"
+                )
+
+            a1, a2, a3 = st.columns(3)
+            sort_choice = a1.selectbox("Sort", ["(none)", "ascending", "descending"], key="mb_sort")
+            limit_val = a2.number_input("Limit to top/bottom N (0 = all)", min_value=0, value=0, step=1, key="mb_limit")
+            title_val = a3.text_input("Title (optional)", key="mb_title")
+
+            with st.expander("Filter (optional)"):
+                fc1, fc2, fc3 = st.columns(3)
+                filter_col = fc1.selectbox("Column", col_options, key="mb_filter_col")
+                filter_op = fc2.selectbox("Operator", ["==", "!=", ">", ">=", "<", "<=", "contains"], key="mb_filter_op")
+                filter_val = fc3.text_input("Value", key="mb_filter_val")
+
+            add_col, clear_col = st.columns([1, 1])
+            add_btn = add_col.button("➕ Add visual to dashboard", type="primary", key="mb_add_btn")
+            clear_btn = clear_col.button("🗑️ Clear dashboard", key="mb_clear_btn")
+
+            if "viz_dashboard" not in st.session_state:
+                st.session_state.viz_dashboard = []
+
+            if clear_btn:
+                st.session_state.viz_dashboard = []
+                st.rerun()
+
+            if add_btn:
+                x = None if x_col == "(none)" else x_col
+                y = None if y_col == "(none)" else y_col
+                color = None if color_col == "(none)" else color_col
+                agg_val = None if agg_choice == "(none)" else agg_choice
+                sort_val = {"ascending": "asc", "descending": "desc"}.get(sort_choice)
+                limit = int(limit_val) if limit_val > 0 else None
+                operation = "groupby" if (agg_val and x) else "raw"
+                filt = {"column": filter_col, "op": filter_op, "value": filter_val} \
+                    if (filter_col != "(none)" and filter_val) else None
+
+                spec = {
+                    "operation": operation, "chart_type": chart_type, "x": x, "y": y,
+                    "agg": agg_val, "color": color, "sort": sort_val, "limit": limit,
+                    "filter": filt, "title": title_val or f"{chart_type.capitalize()} chart",
+                }
+                try:
+                    result_df, rx, ry = apply_spec(viz_df, spec)
+                    if result_df.empty:
+                        st.warning("No rows matched — check your filter.")
+                    else:
+                        fig = render_chart(result_df, rx, ry, spec)
+                        st.session_state.viz_dashboard.append({"spec": spec, "fig": fig})
+                except Exception as e:
+                    st.error(f"Couldn't build that chart: {e}")
+
+            if st.session_state.viz_dashboard:
+                st.subheader("Dashboard")
+                dash = st.session_state.viz_dashboard
+                for row_start in range(0, len(dash), 2):
+                    row_items = list(enumerate(dash))[row_start:row_start + 2]
+                    row_cols = st.columns(2)
+                    for slot, (idx, item) in zip(row_cols, row_items):
+                        with slot:
+                            st.plotly_chart(item["fig"], use_container_width=True, key=f"dash_chart_{idx}")
+                            if st.button("Remove", key=f"dash_remove_{idx}"):
+                                st.session_state.viz_dashboard.pop(idx)
+                                st.rerun()
 
 # =========================================================
 # TAB 3: HISTORY (kept at top so it can be built independent of upload)
